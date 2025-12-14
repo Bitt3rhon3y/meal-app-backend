@@ -1,49 +1,132 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 dotenv.config();
-console.log("MONGO_URI =", process.env.MONGO_URI);
 
-import express from 'express';
-import mongoose from 'mongoose';
-import bodyParser from 'body-parser';
-import cors from 'cors';
+import express from "express";
+import mongoose from "mongoose";
+import cors from "cors";
+
+/* -----------------------------
+   CONFIG
+------------------------------ */
+mongoose.set("bufferCommands", false);
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
-
-
-// Order Schema
+/* -----------------------------
+   SCHEMA
+------------------------------ */
 const orderSchema = new mongoose.Schema({
-  user: Object,
-  goal: String,
-  questions: Object,
-  paymentStatus: { type: String, default: "Pending" },
-  createdAt: { type: Date, default: Date.now }
-});
-const Order = mongoose.model('Order', orderSchema);
+  user: {
+    type: Object,
+    required: true
+  },
+  goal: {
+    type: String,
+    required: true
+  },
+  questions: {
+    type: Object,
+    required: true
+  },
 
-// Save order
-app.post('/order', async (req, res) => {
-  try {
-    const newOrder = new Order(req.body);
-    await newOrder.save();
-    res.json({ success: true, orderId: newOrder._id });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  // 🔑 Referral / marketer code
+  referralCode: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    default: null
+  },
+
+  paymentStatus: {
+    type: String,
+    enum: ["Pending", "Paid", "Failed"],
+    default: "Pending"
+  },
+
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 });
 
-// Get all orders (admin dashboard)
-app.get('/admin/orders', async (req, res) => {
-  const orders = await Order.find({});
-  res.json(orders);
+const Order = mongoose.model("Order", orderSchema);
+
+/* -----------------------------
+   ROUTES
+------------------------------ */
+
+// Create order
+app.post("/order", async (req, res) => {
+  try {
+    const { user, goal, questions, referralCode } = req.body;
+
+    if (!user || !goal || !questions) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required order data"
+      });
+    }
+
+    const order = await Order.create({
+      user,
+      goal,
+      questions,
+      referralCode: referralCode || null
+    });
+
+    res.json({
+      success: true,
+      orderId: order._id
+    });
+
+  } catch (err) {
+    console.error("❌ Order creation failed:", err);
+    res.status(500).json({
+      success: false,
+      error: "Server error while saving order"
+    });
+  }
 });
 
-// Start server
+// Admin: get all orders
+app.get("/admin/orders", async (req, res) => {
+  try {
+    const orders = await Order.find({})
+      .sort({ createdAt: -1 });
+
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({
+      error: "Failed to fetch orders"
+    });
+  }
+});
+
+/* -----------------------------
+   START SERVER (AFTER DB)
+------------------------------ */
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+async function startServer() {
+  try {
+    console.log("MONGO_URI =", process.env.MONGO_URI);
+
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 15000
+    });
+
+    console.log("✅ MongoDB connected successfully");
+
+    app.listen(PORT, () =>
+      console.log(`🚀 Server running on port ${PORT}`)
+    );
+
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err);
+    process.exit(1);
+  }
+}
+
+startServer();
